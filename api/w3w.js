@@ -1,59 +1,49 @@
-// Vercel Serverless Function
-// GET /api/w3w?words=index.home.raft
+// File: api/w3w.js
+
 export default async function handler(req, res) {
+  const { words, country, focus } = req.query;
+
+  if (!words || typeof words !== 'string') {
+    return res.status(400).json({ error: 'Missing or invalid "words" query parameter' });
+  }
+
+  const w3wKey = process.env.W3W_API_KEY;
+  if (!w3wKey) {
+    return res.status(500).json({ error: 'Missing W3W_API_KEY in environment' });
+  }
+
+  const searchParams = new URLSearchParams({
+    words: words.replace(/^\/+/, ''), // strip leading slashes if present
+    key: w3wKey,
+  });
+
+  if (country) {
+    searchParams.set('clip-to-country', country);
+  }
+
+  if (focus) {
+    const coords = focus.split(',');
+    if (coords.length === 2) {
+      searchParams.set('focus', focus);
+    }
+  }
+
+  const apiUrl = `https://api.what3words.com/v3/convert-to-coordinates?${searchParams.toString()}`;
+
   try {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-    if (req.method === 'OPTIONS') return res.status(200).end();
+    const response = await fetch(apiUrl);
+    const data = await response.json();
 
-    const apiKey = process.env.W3W_API_KEY;
-    if (!apiKey) return res.status(500).json({ error: 'Server missing W3W_API_KEY' });
-
-    const words =
-      (req.method === 'GET'
-        ? (req.query.words || req.query.w || '').toString()
-        : (req.body && (req.body.words || req.body.w)) || '');
-
-    const normalized = (words || '')
-      .trim()
-      .replace(/^\/+/, '')
-      .replace(/^w3w:\/\//, '')
-      .replace(/^https?:\/\/.*\/([^.]+\.[^.]+\.[^.]+).*$/, '$1')
-      .toLowerCase();
-
-    const W3W_RE = /^[a-z]+(?:-[a-z]+)*\.[a-z]+(?:-[a-z]+)*\.[a-z]+(?:-[a-z]+)*$/;
-    if (!normalized || !W3W_RE.test(normalized)) {
-      return res.status(400).json({ error: 'Invalid what3words format', example: 'index.home.raft' });
-    }
-
-    const url = new URL('https://api.what3words.com/v3/convert-to-coordinates');
-    url.searchParams.set('words', normalized);
-    url.searchParams.set('key', apiKey);
-
-    const upstream = await fetch(url.toString(), { method: 'GET' });
-    const data = await upstream.json();
-
-    if (!upstream.ok) {
-      return res.status(upstream.status).json({ error: 'what3words API error', details: data });
-    }
-
-    const { coordinates, nearestPlace, language, map } = data || {};
-    if (!coordinates || typeof coordinates.lat !== 'number' || typeof coordinates.lng !== 'number') {
-      return res.status(502).json({ error: 'Unexpected what3words response', details: data });
+    if (!response.ok) {
+      return res.status(response.status).json({ error: data });
     }
 
     return res.status(200).json({
-      words: normalized,
-      lat: coordinates.lat,
-      lng: coordinates.lng,
-      nearestPlace: nearestPlace || null,
-      language: language || null,
-      map: map || null,
-      source: 'what3words'
+      lat: data.coordinates.lat,
+      lng: data.coordinates.lng,
+      nearestPlace: data.nearestPlace,
     });
   } catch (err) {
-    console.error('w3w helper error:', err);
-    return res.status(500).json({ error: 'Internal error' });
+    return res.status(500).json({ error: 'Failed to contact what3words API', details: err.message });
   }
 }
